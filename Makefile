@@ -23,13 +23,12 @@ CFLAGS     =  -O2 -DHAVE_PF_RING -Wall ${INCLUDE} -DENABLE_BPF -D HAVE_PF_RING_Z
 DEBUG_OR_RELEASE = release
 LIBS       =  -Ltarget/${DEBUG_OR_RELEASE} -ltap_capture -L/usr/local/lib -lpfring -lrt -ldl -lm -lssl -lcrypto -lpthread -lpcap
 
-all: tap_capture
-tap_capture.o: main.c
+all: tap-capture
+tap-capture.o: main.c
 	${CC} ${CFLAGS} -c $< -o $@
 rust-code:
 	cargo build --${DEBUG_OR_RELEASE}
-tap-capture: tap_capture.o ${LIBPFRING} rust-code
+tap-capture: tap-capture.o ${LIBPFRING} rust-code
 	${CC} ${CFLAGS} $< -o $@ ${LIBS}
 clean:
-	@rm -f capture *.o *~
-
+	@rm -f tap-capture *.o *~
