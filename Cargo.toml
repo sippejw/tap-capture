@@ -1,0 +1,30 @@
+[package]
+name = "tap-capture"
+version = "0.1.0"
+edition = "2018"
+build = "src/build.rs"
+rust-version = "1.57"
+
+[build-dependencies]
+cmake = "0.1"
+
+[dependencies]
+clap = "2.33.3"
+log = "0.4.16"
+env_logger = "0.9.0"
+pnet = "0.28.0"
+pcap = "0.8.1"
+time = "0.1"
+maxminddb = "0.17.0"
+postgres = "0.19.1"
+libc = "0.2.101"
+rand = "0.8.5"
+memuse = "0.2.0"
+hkdf = "0.12.3"
+sha2 = "0.10.4"
+aes = "0.8.1"
+ring = "0.16.20"
+
+[lib]
+name ="tap_capture"
+crate-type = ["rlib", "staticlib"]
