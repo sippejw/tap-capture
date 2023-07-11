@@ -1,10 +1,9 @@
-use std::net::{IpAddr};
+use std::net::IpAddr;
 use std::hash::{Hash, Hasher};
-use std::time::{Instant};
+use std::time::Instant;
 
 use memuse::DynamicUsage;
 use pnet::packet::tcp::TcpPacket;
-use pnet::packet::udp::UdpPacket;
 
 #[derive(Copy, Clone)]
 pub struct Flow {
@@ -21,15 +20,6 @@ impl Flow {
             dst_ip: *dst_ip,
             src_port: tcp_pkt.get_source(),
             dst_port: tcp_pkt.get_destination(),
-        }
-    }
-
-    pub fn new_udp(src_ip: &IpAddr, dst_ip: &IpAddr, udp_pkt: &UdpPacket) -> Flow {
-        Flow {
-            src_ip: *src_ip,
-            dst_ip: *dst_ip,
-            src_port: udp_pkt.get_source(),
-            dst_port: udp_pkt.get_destination(),
         }
     }
 
@@ -83,11 +73,4 @@ impl DynamicUsage for TimedFlow {
     fn dynamic_usage_bounds(&self) -> (usize, Option<usize>) {
         return (self.flow.dynamic_usage()+16, None);
     }
-}
-pub fn u8_to_u16_be(first_byte: u8, second_byte: u8) -> u16 {
-    (first_byte as u16) << 8 | (second_byte as u16)
-}
-
-pub fn u8_to_u32_be(first_byte: u8, second_byte: u8, third_byte: u8, fourth_byte: u8) -> u32 {
-    (first_byte as u32) << 24 | (second_byte as u32) << 16 | (third_byte as u32) << 8 | (second_byte as u32)
 }

@@ -17,7 +17,6 @@ use log::{info, warn, error};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::tcp::{TcpPacket, ipv4_checksum};
-use pnet::packet::udp::UdpPacket;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use pcap::Capture;
@@ -123,20 +122,12 @@ fn run_from_pcap(pcap_filename: &str, tcp_dsn: Option<String>, gre_offset: usize
                                                             IpAddr::V4(ipv4_pkt.get_destination()),
                                                             &tcp_pkt,
                                                             ipv4_pkt.get_ecn(),
+                                                            ipv4_pkt.get_identification(),
+                                                            ipv4_pkt.get_ttl(),
                                                         )
                                                     }
                                                 }
                                             },
-                                            IpNextHeaderProtocols::Udp => {
-                                                if let Some(udp_pkt) = UdpPacket::new(&ipv4_pkt.payload()) {
-                                                    ft.handle_udp_packet(
-                                                        IpAddr::V4(ipv4_pkt.get_source()),
-                                                        IpAddr::V4(ipv4_pkt.get_destination()),
-                                                        &udp_pkt,
-                                                        ipv4_pkt.get_ecn(),
-                                                    )
-                                                }
-                                            }
                                             _ => {
                                                 println!("{:?}", ipv4_pkt.get_next_level_protocol());
                                             }

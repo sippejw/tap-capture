@@ -1,20 +1,21 @@
 extern crate time;
 extern crate postgres;
+extern crate maxminddb;
 
 use std::ops::Sub;
 use std::time::{Duration, Instant};
 use std::collections::{HashSet, VecDeque};
+use maxminddb::{Reader, geoip2};
 use pnet::packet::ethernet::{EthernetPacket, EtherTypes};
 use pnet::packet::ipv6::Ipv6Packet;
-use pnet::packet::udp::UdpPacket;
-use pnet::packet::{Packet};
-use pnet::packet::ipv4::{Ipv4Packet};
-use pnet::packet::ip::{IpNextHeaderProtocols};
-use pnet::packet::tcp::{TcpPacket, TcpFlags, TcpOptionNumber};
+use pnet::packet::Packet;
+use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::ip::IpNextHeaderProtocols;
+use pnet::packet::tcp::{TcpPacket, TcpFlags};
 use rand::prelude::ThreadRng;
-use std::net::{IpAddr};
+use std::net::IpAddr;
 use log::{error, info};
-use std::{thread};
+use std::thread;
 use postgres::{Client, NoTls};
 use rand::Rng;
 use std::io::Write;
@@ -22,8 +23,10 @@ use std::fs::OpenOptions;
 use memuse::DynamicUsage;
 
 use crate::cache::{MeasurementCache, MEASUREMENT_CACHE_FLUSH};
-use crate::stats_tracker::{StatsTracker};
+use crate::stats_tracker::StatsTracker;
 use crate::common::{TimedFlow, Flow};
+
+const CCDB_PATH: &str = "/usr/share/GeoIP/GeoLite2-Country.mmdb";
 
 pub struct FlowTracker {
     flow_timeout: Duration,
@@ -36,9 +39,8 @@ pub struct FlowTracker {
     stale_udp_drops: VecDeque<TimedFlow>,
     prevented_udp_flows: HashSet<Flow>,
     stale_udp_preventions: VecDeque<TimedFlow>,
-    tracked_quic_conns: HashSet<Flow>,
-    stale_quic_drops: VecDeque<TimedFlow>,
     rand: ThreadRng,
+    cc_reader: Reader<Vec<u8>>,
     pub gre_offset: usize,
 }
 
@@ -55,9 +57,8 @@ impl FlowTracker {
             stale_udp_drops: VecDeque::with_capacity(65536),
             prevented_udp_flows: HashSet::new(),
             stale_udp_preventions: VecDeque::with_capacity(65536),
-            tracked_quic_conns: HashSet::new(),
-            stale_quic_drops: VecDeque::with_capacity(65536),
             rand: rand::thread_rng(),
+            cc_reader: maxminddb::Reader::open_readfile(String::from(CCDB_PATH)).unwrap(),
             gre_offset: gre_offset,
         };
 
@@ -93,19 +94,11 @@ impl FlowTracker {
                             IpAddr::V4(ipv4_pkt.get_destination()),
                             &tcp_pkt,
                             ipv4_pkt.get_ecn(),
+                            ipv4_pkt.get_identification(),
+                            ipv4_pkt.get_ttl(),
                         )
                     }
                 },
-                IpNextHeaderProtocols::Udp => {
-                    if let Some(udp_pkt) = UdpPacket::new(&ipv4_pkt.payload()) {
-                        self.handle_udp_packet(
-                            IpAddr::V4(ipv4_pkt.get_source()),
-                            IpAddr::V4(ipv4_pkt.get_destination()),
-                            &udp_pkt,
-                            ipv4_pkt.get_ecn(),
-                        )
-                    }
-                }
                 _ => {}
             }
         }
@@ -128,66 +121,33 @@ impl FlowTracker {
                             IpAddr::V6(ipv6_pkt.get_destination()),
                             &tcp_pkt,
                             ipv6_pkt.get_traffic_class() & 0b0000011,
+                            0b00000000 as u16,
+                            0b0000 as u8,
                         )
                     }
                 },
-                IpNextHeaderProtocols::Udp => {
-                    if let Some(udp_pkt) = UdpPacket::new(&ipv6_pkt.payload()) {
-                        self.handle_udp_packet(
-                            IpAddr::V6(ipv6_pkt.get_source()),
-                            IpAddr::V6(ipv6_pkt.get_destination()),
-                            &udp_pkt,
-                            ipv6_pkt.get_traffic_class() & 0b0000011,
-                        )
-                    }
-                },
-                IpNextHeaderProtocols::Udp => {
-                    if let Some(udp_pkt) = UdpPacket::new(&ipv6_pkt.payload()) {
-                        self.handle_udp_packet(
-                            IpAddr::V6(ipv6_pkt.get_source()),
-                            IpAddr::V6(ipv6_pkt.get_destination()),
-                            &udp_pkt,
-                            ipv6_pkt.get_traffic_class() & 0b0000011,
-                        )
-                    }
-                }
                 _ => return,
             }
         }
     }
 
-    pub fn handle_udp_packet(&mut self, source: IpAddr, destination: IpAddr, udp_pkt: &UdpPacket, ecn: u8) {
-        self.stats.udp_packets_seen += 1;
-        let flow = Flow::new_udp(&source, &destination, &udp_pkt);
-        if self.tracked_udp_flows.contains(&flow) {
-            // Packets coming from client
-        } else if self.tracked_udp_flows.contains(&flow.reversed_clone()) {
-            // Packets coming from server
-        } else {
-            // New flow
-            if self.rand.gen_range(0..10) > -1 {
-                // Allows for random sampling of UDP flows
-                self.begin_tracking_udp_flow(&flow);
-            } else {
-                self.prevent_tracking_udp_flow(&flow);
+    pub fn cc_lookup(&mut self, addr: IpAddr) -> Option<String> {
+        let country: Option<geoip2::Country>= self.cc_reader.lookup(addr).unwrap_or(None);
+        let mut cc: Option<String> = None;
+        if let Some(country) = country {
+            if let Some(valid_country) = country.country {
+                if let Some(valid_iso) = valid_country.iso_code {
+                    cc = Some(valid_iso.to_string());
+                }
             }
         }
-        if udp_pkt.payload().len() == 0 {
-            return;
-        }
-        match (udp_pkt.get_destination(), udp_pkt.get_source()) {
-            (_, _) => {},
-        }
-
+        return cc;
     }
 
-    pub fn handle_tcp_packet(&mut self, source: IpAddr, destination: IpAddr, tcp_pkt: &TcpPacket, ecn: u8) {
+    pub fn handle_tcp_packet(&mut self, source: IpAddr, destination: IpAddr, tcp_pkt: &TcpPacket, _ecn: u8, ipid: u16, ttl: u8) {
         self.stats.tcp_packets_seen += 1;
         let flow = Flow::new_tcp(&source, &destination, &tcp_pkt);
         let tcp_flags = tcp_pkt.get_flags();
-        for option in tcp_pkt.get_options_iter() {
-            // Iterates over each tcp pkt option
-        }
         if (tcp_flags & TcpFlags::SYN) != 0 && (tcp_flags & TcpFlags::ACK) == 0 {
             // New TCP Flow
             self.stats.connections_seen += 1;
@@ -195,32 +155,39 @@ impl FlowTracker {
                 // Allows for random sampling of TCP flows
                 self.stats.connections_started += 1;
                 self.begin_tracking_tcp_flow(&flow, tcp_pkt.packet().to_vec());
+
+
+                let src_cc = self.cc_lookup(source);
+                let dst_cc = self.cc_lookup(destination);
+                self.cache.add_measurement(&flow, src_cc, dst_cc, tcp_flags, ipid, ttl, tcp_pkt.get_destination());
             }
             return
         }
         if (tcp_flags & TcpFlags::SYN) != 0 && (tcp_flags & TcpFlags::ACK) != 0 {
             if self.tracked_tcp_flows.contains(&flow.reversed_clone()) {
                 // Server response to 3-way handshake (SYN ACK)
+                self.cache.update_measurement(&flow.reversed_clone(), tcp_flags, ipid, ttl);
             }
             return
         }
         if (tcp_flags & TcpFlags::FIN) != 0 || (tcp_flags & TcpFlags::RST) != 0 {
             if self.tracked_tcp_flows.contains(&flow) {
                 // Client closed the connection
+                self.cache.update_measurement(&flow, tcp_flags, ipid, ttl);
             } else if self.tracked_tcp_flows.contains(&flow.reversed_clone()) {
                 // Server closed the connection
+                self.cache.update_measurement(&flow.reversed_clone(), tcp_flags, ipid, ttl);
             }
-            self.tracked_tcp_flows.remove(&flow);
+            // self.tracked_tcp_flows.remove(&flow);
             self.stats.connections_closed += 1;
-            return
-        }
-        if tcp_pkt.payload().len() == 0 {
             return
         }
         if self.tracked_tcp_flows.contains(&flow) {
             // Client data packet
+            self.cache.update_measurement(&flow, tcp_flags, ipid, ttl);
         } else if self.tracked_tcp_flows.contains(&flow.reversed_clone()) {
             // Server data packet
+            self.cache.update_measurement(&flow.reversed_clone(), tcp_flags, ipid, ttl);
         }
         // once in a while -- flush everything
         if time::now().to_timespec().sec - self.cache.last_flush.to_timespec().sec >
@@ -231,11 +198,53 @@ impl FlowTracker {
 
     pub fn flush_to_db(&mut self) {
 
+        let measurement_cache = self.cache.flush_measurements();
+
         if self.tcp_dsn != None {
             let tcp_dsn = self.tcp_dsn.clone().unwrap();
             thread::spawn(move || {
                 let inserter_thread_start = time::now();
                 let mut thread_db_conn = Client::connect(&tcp_dsn, NoTls).unwrap();
+
+                let insert_tcp_measurement = match thread_db_conn.prepare(
+                    "INSERT
+                    INTO ecn_measurements (
+                        start_time,
+                        last_updated,
+                        server_port,
+                        src_cc,
+                        dst_cc,
+                        tcp_flags,
+                        ipid,
+                        ttl
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8);"
+                )
+                {
+                    Ok(stmt) => stmt,
+                    Err(e) => {
+                        error!("Preparing insert_measurement failed: {}", e);
+                        return
+                    }
+                };
+                for (_k, measurement) in measurement_cache {
+                    let updated_rows = thread_db_conn.execute(&insert_tcp_measurement, &[
+                        &(measurement.start_time), 
+                        &(measurement.last_updated), 
+                        &(measurement.server_port as i16),
+                        &(measurement.src_cc),
+                        &(measurement.dst_cc),
+                        &(measurement.tcp_flags),
+                        &(measurement.ipid),
+                        &(measurement.ttl),
+                    ]);
+                    if updated_rows.is_err() {
+                        error!("Error updating TCP ECN measurements: {:?}", updated_rows);
+                    }
+                }
+
+                let inserter_thread_end = time::now();
+                info!("Updating TCP DB took {:?} ns in separate thread",
+                         inserter_thread_end.sub(inserter_thread_start).num_nanoseconds());
             });
         }
     }
@@ -248,24 +257,6 @@ impl FlowTracker {
             flow: *flow,
         });
         self.tracked_tcp_flows.insert(*flow);
-    }
-
-    fn begin_tracking_udp_flow(&mut self, flow: &Flow) {
-        // Always push back, even if the entry was already there. Doesn't hurt
-        // to do a second check on overdueness, and this is simplest.
-        self.stale_udp_drops.push_back(TimedFlow {
-            event_time: Instant::now(),
-            flow: *flow,
-        });
-        self.tracked_udp_flows.insert(*flow);
-    }
-
-    fn prevent_tracking_udp_flow(&mut self, flow: &Flow) {
-        self.stale_udp_preventions.push_back(TimedFlow {
-            event_time: Instant::now(),
-            flow: *flow,
-        });
-        self.prevented_udp_flows.insert(*flow);
     }
 
     pub fn cleanup(&mut self) {
