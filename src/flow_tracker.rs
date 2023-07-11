@@ -206,42 +206,59 @@ impl FlowTracker {
                 let inserter_thread_start = time::now();
                 let mut thread_db_conn = Client::connect(&tcp_dsn, NoTls).unwrap();
 
-                let insert_tcp_measurement = match thread_db_conn.prepare(
-                    "INSERT
-                    INTO ecn_measurements (
-                        start_time,
-                        last_updated,
-                        server_port,
-                        src_cc,
-                        dst_cc,
-                        tcp_flags,
-                        ipid,
-                        ttl
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8);"
-                )
-                {
-                    Ok(stmt) => stmt,
-                    Err(e) => {
-                        error!("Preparing insert_measurement failed: {}", e);
-                        return
-                    }
-                };
-                for (_k, measurement) in measurement_cache {
-                    let updated_rows = thread_db_conn.execute(&insert_tcp_measurement, &[
-                        &(measurement.start_time), 
-                        &(measurement.last_updated), 
-                        &(measurement.server_port as i16),
-                        &(measurement.src_cc),
-                        &(measurement.dst_cc),
-                        &(measurement.tcp_flags),
-                        &(measurement.ipid),
-                        &(measurement.ttl),
-                    ]);
-                    if updated_rows.is_err() {
-                        error!("Error updating TCP ECN measurements: {:?}", updated_rows);
-                    }
-                }
+                // let insert_tcp_measurement = match thread_db_conn.prepare(
+                //     "INSERT
+                //     INTO ecn_measurements (
+                //         start_time,
+                //         last_updated,
+                //         server_port,
+                //         src_cc,
+                //         dst_cc,
+                //         tcp_flags,
+                //         ipid,
+                //         ttl
+                //     VALUES ($1, $2, $3, $4, $5, $6, $7, $8);"
+                // )
+                // {
+                //     Ok(stmt) => stmt,
+                //     Err(e) => {
+                //         error!("Preparing insert_measurement failed: {}", e);
+                //         return
+                //     }
+                // };
+                // for (_k, measurement) in measurement_cache {
+                //     let updated_rows = thread_db_conn.execute(&insert_tcp_measurement, &[
+                //         &(measurement.start_time), 
+                //         &(measurement.last_updated), 
+                //         &(measurement.server_port as i16),
+                //         &(measurement.src_cc),
+                //         &(measurement.dst_cc),
+                //         &(measurement.tcp_flags),
+                //         &(measurement.ipid),
+                //         &(measurement.ttl),
+                //     ]);
+                //     if updated_rows.is_err() {
+                //         error!("Error updating TCP ECN measurements: {:?}", updated_rows);
+                //     }
+                // }
 
+                use itertools::Itertools; // For tuples() and format_with()
+
+                // let params: Vec<_> = measurement_cache.values()
+                //     .flat_map(|row| [&row.start_time, &row.last_updated, &(row.server_port as i64), &row.src_cc, &row.dst_cc, &row.tcp_flags, &row.ipid &row.ttl])
+                //     .collect();
+                let query = format!(
+                    "INSERT INTO censorship_measurements(src_cc, dst_cc, server_port, tcp_flags, ipid, ttl, last_updated, start_time) values {}",
+                    measurement_cache.values()
+                        .tuples()
+                        .format_with(", ", |(i, j, k, l, m, n, o, p), f| {
+                            f(&format_args!("(${i:?}, ${j:?}, ${k:?}, ${l:?}, ${m:?}, ${n:?}, ${o:?}, ${p:?})"))
+                        }),
+                );
+                let updated_rows = thread_db_conn.batch_execute(&query);
+                if updated_rows.is_err() {
+                    error!("Error updating measurements: {:?}", updated_rows);
+                }
                 let inserter_thread_end = time::now();
                 info!("Updating TCP DB took {:?} ns in separate thread",
                          inserter_thread_end.sub(inserter_thread_start).num_nanoseconds());

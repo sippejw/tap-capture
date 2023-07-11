@@ -11,6 +11,7 @@ pub struct MeasurementCache {
     pub flow_measures_flushed: HashSet<Flow>,
 }
 
+#[derive(Debug)]
 pub struct FlowMeasurement {
     pub src_cc: Option<String>,
     pub dst_cc: Option<String>,
