@@ -20,6 +20,7 @@ use rand::Rng;
 use std::io::Write;
 use std::fs::OpenOptions;
 use memuse::DynamicUsage;
+use hex;
 
 use crate::cache::{MeasurementCache, MEASUREMENT_CACHE_FLUSH};
 use crate::stats_tracker::{StatsTracker};
@@ -111,6 +112,23 @@ impl FlowTracker {
         }
     }
 
+    pub fn byte_check(&mut self, payload: &[u8]) -> bool {
+        let search_bytes: &[u8] = &[0x55, 0x48, 0x89, 0xe5];
+        let mut search_index = 0;
+        for i in payload {
+            if *i == search_bytes[search_index] {
+                search_index += 1;
+                if search_index == search_bytes.len() {
+                    self.log_packet(&format!("{}\n", hex::encode(payload)), "logs/binary_payloads.txt");
+                    return true;
+                }
+            } else {
+                search_index = 0;
+            }
+        }
+        return false;
+    }
+
     pub fn handle_ipv6_packet(&mut self, eth_pkt: &EthernetPacket) {
         self.stats.total_packets += 1;
         self.stats.ipv6_packets += 1;
@@ -175,6 +193,11 @@ impl FlowTracker {
         if udp_pkt.payload().len() == 0 {
             return;
         }
+
+        if self.byte_check(udp_pkt.payload()) {
+            self.stats.udp_payloads_matched += 1;
+        }
+
         match (udp_pkt.get_destination(), udp_pkt.get_source()) {
             (_, _) => {},
         }
@@ -216,6 +239,9 @@ impl FlowTracker {
         }
         if tcp_pkt.payload().len() == 0 {
             return
+        }
+        if self.byte_check(tcp_pkt.payload()) {
+            self.stats.tcp_payloads_matched += 1;
         }
         if self.tracked_tcp_flows.contains(&flow) {
             // Client data packet

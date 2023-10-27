@@ -16,6 +16,9 @@ pub struct StatsTracker {
     pub connections_closed: u64,
 
     pub udp_packets_seen: u64,
+
+    pub udp_payloads_matched: u64,
+    pub tcp_payloads_matched: u64,
 }
 
 impl StatsTracker {
@@ -35,13 +38,26 @@ impl StatsTracker {
             connections_closed: 0,
 
             udp_packets_seen: 0,
+
+            udp_payloads_matched: 0,
+            tcp_payloads_matched: 0,
         }
     }
 
     pub fn print_stats(&mut self, curr_drops: i64, total_drops: i64) {
         let curr_time = time::now();
         self.print_general_stats(curr_drops, total_drops);
+        self.print_match_stats();
         self.last_print = curr_time;
+    }
+
+    pub fn print_match_stats(&mut self) {
+        info!("[matched stats] tcp payloads: {} udp payloads: {}",
+              self.tcp_payloads_matched,
+              self.udp_payloads_matched,
+        );
+        self.tcp_payloads_matched = 0;
+        self.udp_payloads_matched = 0;
     }
 
     pub fn print_general_stats(&mut self, curr_drops: i64, total_drops: i64) {
