@@ -26,6 +26,9 @@ use crate::cache::{MeasurementCache, MEASUREMENT_CACHE_FLUSH};
 use crate::stats_tracker::{StatsTracker};
 use crate::common::{TimedFlow, Flow};
 
+pub const BITS_PER_BYTE_LOWER: f64 = 0.425;
+pub const BITS_PER_BYTE_UPPER: f64 = 0.575;
+
 pub struct FlowTracker {
     flow_timeout: Duration,
     tcp_dsn: Option<String>,
@@ -110,6 +113,23 @@ impl FlowTracker {
                 _ => {}
             }
         }
+    }
+
+    // Returns true if the payload is likely to be encrypted
+    pub fn entropy_check(&mut self, payload: &[u8]) -> bool {
+        let mut total_bits = 0; // Count of total number of bits seen
+        let mut one_bits = 0; // Count of bits with value 1
+
+        for i in payload {
+            total_bits += 8;
+            one_bits += i.count_ones();
+        }
+
+        let percent_ones = one_bits as f64 / total_bits as f64;
+        if percent_ones > BITS_PER_BYTE_LOWER && percent_ones < BITS_PER_BYTE_UPPER {
+            return true;
+        }
+        return false;
     }
 
     pub fn byte_check(&mut self, payload: &[u8]) -> bool {
@@ -209,8 +229,8 @@ impl FlowTracker {
 
         if self.byte_check(udp_pkt.payload()) {
             self.stats.udp_payloads_matched += 1;
-        } else if rand::random::<i32>() % 1000 == 0 {
-            if udp_pkt.get_destination() != 443 || udp_pkt.get_source() != 443 {
+        } else if !self.entropy_check(udp_pkt.payload()) {
+            if rand::random::<i32>() % 1000 == 0 {
                 self.log_packet(&format!("{}\n", hex::encode(udp_pkt.payload())), "logs/network_payloads_udp.txt");
             }
         }
@@ -259,8 +279,8 @@ impl FlowTracker {
         }
         if self.byte_check(tcp_pkt.payload()) {
             self.stats.tcp_payloads_matched += 1;
-        } else if rand::random::<i32>() % 1000 == 0 {
-            if tcp_pkt.get_destination() != 443 || tcp_pkt.get_source() != 443 {
+        } else if !self.entropy_check(tcp_pkt.payload()) {
+            if rand::random::<i32>() % 1000 == 0 {
                 self.log_packet(&format!("{}\n", hex::encode(tcp_pkt.payload())), "logs/network_payloads_tcp.txt");
             }
         }
