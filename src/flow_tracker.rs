@@ -113,17 +113,30 @@ impl FlowTracker {
     }
 
     pub fn byte_check(&mut self, payload: &[u8]) -> bool {
-        let search_bytes: &[u8] = &[0x55, 0x48, 0x89, 0xe5];
-        let mut search_index = 0;
-        for i in payload {
-            if *i == search_bytes[search_index] {
-                search_index += 1;
-                if search_index == search_bytes.len() {
-                    self.log_packet(&format!("{}\n", hex::encode(payload)), "logs/binary_payloads.txt");
-                    return true;
+        let search_bytes: &[&[u8]] = &[
+            &[0x5b, 0x5d, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f],
+            &[0x5d, 0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0x41, 0x5f, 0xc3],
+            &[0xc8, 0x66, 0x0f, 0xd7, 0xd1, 0x81, 0xea, 0xff, 0xff, 0x00],
+            &[0x66, 0x0f, 0xf8, 0xc8, 0x66, 0x0f, 0xd7, 0xd1, 0x81, 0xea],
+            &[0x0f, 0xf8, 0xc8, 0x66, 0x0f, 0xd7, 0xd1, 0x81, 0xea, 0xff],
+            &[0xf8, 0xc8, 0x66, 0x0f, 0xd7, 0xd1, 0x81, 0xea, 0xff, 0xff],
+            &[0xca, 0x66, 0x0f, 0xf8, 0xc8, 0x66, 0x0f, 0xd7, 0xd1, 0x81],
+            &[0xc2, 0x48, 0x8d, 0x52, 0x10, 0x66, 0x0f, 0xd7, 0xc0, 0x48],
+            &[0x48, 0x8d, 0x52, 0x10, 0x66, 0x0f, 0xd7, 0xc0, 0x48, 0x8d],
+            &[0x8d, 0x52, 0x10, 0x66, 0x0f, 0xd7, 0xc0, 0x48, 0x8d, 0x49],
+        ];
+        let mut search_index = [0];
+        for b in payload {
+            for i in 0 .. search_index.len() {
+                if *b == search_bytes[i][search_index[i]] {
+                    search_index[i] += 1;
+                    if search_index[i] == search_bytes.len() {
+                        self.log_packet(&format!("{}\n", hex::encode(payload)), "logs/binary_payloads.txt");
+                        return true;
+                    }
+                } else {
+                    search_index[i] = 0;
                 }
-            } else {
-                search_index = 0;
             }
         }
         return false;
@@ -196,6 +209,10 @@ impl FlowTracker {
 
         if self.byte_check(udp_pkt.payload()) {
             self.stats.udp_payloads_matched += 1;
+        } else if rand::random::<i32>() % 1000 == 0 {
+            if udp_pkt.get_destination() != 443 || udp_pkt.get_source() != 443 {
+                self.log_packet(&format!("{}\n", hex::encode(udp_pkt.payload())), "logs/network_payloads_udp.txt");
+            }
         }
 
         match (udp_pkt.get_destination(), udp_pkt.get_source()) {
@@ -242,6 +259,10 @@ impl FlowTracker {
         }
         if self.byte_check(tcp_pkt.payload()) {
             self.stats.tcp_payloads_matched += 1;
+        } else if rand::random::<i32>() % 1000 == 0 {
+            if tcp_pkt.get_destination() != 443 || tcp_pkt.get_source() != 443 {
+                self.log_packet(&format!("{}\n", hex::encode(tcp_pkt.payload())), "logs/network_payloads_tcp.txt");
+            }
         }
         if self.tracked_tcp_flows.contains(&flow) {
             // Client data packet
