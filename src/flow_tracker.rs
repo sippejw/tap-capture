@@ -84,6 +84,11 @@ impl FlowTracker {
         self.stats.total_packets += 1;
         self.stats.ipv4_packets += 1;
         self.stats.bytes_processed += eth_pkt.packet().len() as u64;
+        if !self.byte_check(eth_pkt.payload()) && !self.entropy_check(eth_pkt.payload()) && eth_pkt.payload().len() >= 120 {
+            if rand::random::<i32>() % 1000 == 0 {
+                self.log_packet(&format!("{}\n", hex::encode(eth_pkt.payload())), "logs/network_layer_payloads.txt");
+            }
+        }
         let ipv4_pkt = match eth_pkt.get_ethertype() {
             EtherTypes::Vlan => Ipv4Packet::new(&eth_pkt.payload()[4..]),
             _ => Ipv4Packet::new(eth_pkt.payload()),
@@ -229,10 +234,6 @@ impl FlowTracker {
 
         if self.byte_check(udp_pkt.payload()) {
             self.stats.udp_payloads_matched += 1;
-        } else if !self.entropy_check(udp_pkt.payload()) {
-            if rand::random::<i32>() % 1000 == 0 {
-                self.log_packet(&format!("{}\n", hex::encode(udp_pkt.payload())), "logs/network_payloads_udp.txt");
-            }
         }
 
         match (udp_pkt.get_destination(), udp_pkt.get_source()) {
@@ -279,10 +280,6 @@ impl FlowTracker {
         }
         if self.byte_check(tcp_pkt.payload()) {
             self.stats.tcp_payloads_matched += 1;
-        } else if !self.entropy_check(tcp_pkt.payload()) {
-            if rand::random::<i32>() % 1000 == 0 {
-                self.log_packet(&format!("{}\n", hex::encode(tcp_pkt.payload())), "logs/network_payloads_tcp.txt");
-            }
         }
         if self.tracked_tcp_flows.contains(&flow) {
             // Client data packet
